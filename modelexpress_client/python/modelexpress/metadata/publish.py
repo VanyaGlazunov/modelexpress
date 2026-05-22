@@ -58,7 +58,7 @@ def build_source_identity(
     return p2p_pb2.SourceIdentity(
         mx_version=mx_version,
         mx_source_type=p2p_pb2.MX_SOURCE_TYPE_WEIGHTS,
-        model_name=model_config.model,
+        model_name=_resolve_model_name(model_config),
         backend_framework=p2p_pb2.BACKEND_FRAMEWORK_VLLM,
         tensor_parallel_size=tp_size,
         pipeline_parallel_size=pp_size,
@@ -67,6 +67,30 @@ def build_source_identity(
         quantization=quantization,
         revision=_resolve_model_revision(model_config),
     )
+
+
+def _resolve_model_name(model_config) -> str:
+    """Resolve the model name for identity matching across pods.
+
+    Priority:
+    1. MX_MODEL_IDENTITY env var — explicit deployer override. Use this
+       when --model points to a local path (e.g. a disk-loaded pod) and
+       you need the identity to match pods that loaded the same model
+       from a different source (e.g. S3 or RDMA).
+    2. model_config.model_weights — the original object-storage URI
+       (e.g. s3://bucket/model) preserved by vLLM when --model is an
+       S3/GCS/Azure URI. Stable across pods regardless of local cache
+       paths, so RDMA matching works without any extra configuration.
+    3. model_config.model — the local path or HuggingFace model ID that
+       vLLM resolved --model to. Fallback for plain local or HF models.
+    """
+    override = os.environ.get("MX_MODEL_IDENTITY", "")
+    if override:
+        return override
+    model_weights = getattr(model_config, "model_weights", None)
+    if model_weights:
+        return model_weights
+    return model_config.model
 
 
 def _resolve_model_revision(model_config) -> str:
